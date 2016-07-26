@@ -28,9 +28,6 @@ def main():
 
 
 if __name__ == '__main__':
-	import sys
-	sys.argv.extend('amr wav'.split())
-
 	parser = argparse.ArgumentParser()
 	parser.add_argument("-s", "--sour-dir", dest="sour_dir",
 					  help="source directory", metavar="SOUR_DIR")
