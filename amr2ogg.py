@@ -6,6 +6,7 @@ from __future__ import division
 import os
 import sys
 import glob
+import shutil
 
 from subprocess import Popen, PIPE, STDOUT
 import threading
@@ -14,224 +15,212 @@ import wave
 import time
 
 try:
-  CWD = os.path.abspath(os.path.dirname(__file__))
+	CWD = os.path.abspath(os.path.dirname(__file__))
 except:
-  CWD = os.path.abspath(os.path.dirname(sys.executable))
-  # CWD = os.path.abspath(os.path.dirname(sys.argv[0]))
+	CWD = os.path.abspath(os.path.dirname(sys.executable))
+
+
+# CWD = os.path.abspath(os.path.dirname(sys.argv[0]))
+
 
 def path2sys():
-  binpath = []
-  binpath.append(CWD)
-  binpath.append(os.environ['PATH'])
-  os.environ['PATH'] = os.path.pathsep.join(binpath)
+	binpath = []
+	binpath.append(CWD)
+	binpath.append(os.environ['PATH'])
+	os.environ['PATH'] = os.path.pathsep.join(binpath)
 
-def run(cmd, options=None):
-  try:
-    if sys.stdout.isatty():
-      console = True
-  except:
-    console = False
 
-  if console:
-    p = Popen(cmd, shell=True)
-  else:
-    # print(cmd)
-    p = Popen(cmd, shell=True, stdout=PIPE, stderr=STDOUT)
-    # p = Popen(cmd, shell=True, stdout=PIPE)
-  if console:
-    stdout, stderr = p.communicate()
-    return(p.returncode, None, None)
-  else:
-    if sys.platform in ('win32', 'win64'):
-      coding = 'gbk'
-    else:
-      coding = sys.getdefaultencoding()
+def run(cmd):
+	p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+	stdout_s, stderr_s = p.communicate()
+	p.wait()
+	return p.returncode, stdout_s, stderr_s
 
-    if stdlines:
-      st = time.clock()
-      lines = []
-      while True:
-        line = p.stdout.readline()
-        if line:
-          line = line.strip()
-          if len(line) > 0: lines.append(line)
-        else:
-          break
-        if (time.clock() - st >= 0.2) and (len(lines) > 0):
-          stdlines.append('\n'.join(lines).decode(coding))
-          stdlines.moveCursor(11)
-          lines[:] = []
-          st = time.clock()
 
-      try:
-        stdlines.append('\n'.join(lines).decode(coding))
-        stdlines.moveCursor(11)
-      except:
-        pass
+def aud2fix(audfile):
+	if not os.path.isfile(audfile):
+		return
 
-      # stdout, stderr = p.communicate()
-      # return(p.returncode, stdout.decode(coding))
-      p.wait()
-      return(p.returncode, None, None)
-    else:
-      stdout, stderr = p.communicate()
-      print(stdout.decode(coding))
-      print(stderr.decode(coding))
-      return(p.returncode, stdout.decode(coding), stderr.decode(coding))
+	magic = '#!AMR\n'
+	with open(audfile, 'r+b') as fi:
+		auddata = fi.read()
+		if auddata[:len(magic)] != magic:
+			fi.seek(0)
+			fi.write(magic)
+			fi.write(auddata)
+	return audfile
 
-  # print 'return code : %s' % p.returncode # is 0 if success
-  pass
 
-def aud2fix(aud):
-  if not os.path.isfile(aud):
-    return(None)
+def is_regular_amrfile(amrfile):
+	magic_amr = b'#!AMR'
+	with open(amrfile, 'rb') as fi:
+		data = fi.read()
+		return data[:len(magic_amr)] == magic_amr
 
-  magic = '#!AMR\n'
-  with open(aud, 'r+b') as audfile:
-    auddata = audfile.read()
-    if auddata[:len(magic)] != magic:
-      audfile.seek(0)
-      audfile.write(magic)
-      audfile.write(auddata)
-  return(aud)
-  pass
 
-def amr2pcm(amr):
-  if not os.path.isfile(amr):
-    return(None)
+def silk2pcm(silkfile):
+	if not os.path.isfile(silkfile):
+		return
 
-  magic = '#!SILK_V3'
-  with open(amr, 'r+b') as amrfile:
-    amrdata = amrfile.read()
-    if amrdata[:len(magic)] != magic:
-      amrfile.seek(0)
-      amrfile.write(amrdata[1:])
-      amrfile.truncate(len(amrdata)-1)
+	magic_silk = b'#!SILK_V3'
+	with open(silkfile, 'r+b') as fi:
+		data = fi.read()
+		if data[1:len(magic_silk) + 1] == magic_silk:
+			fi.seek(0)
+			fi.write(data[1:])
+			fi.truncate(len(data) - 1)
 
-  cmd = os.path.join(CWD, 'decoder.exe')
+	cmd = os.path.join(CWD, 'decoder.exe')
 
-  options = []
-  options.append('-Fs_API 8000')
+	options = []
+	options.append('-Fs_API 8000')
 
-  fn = os.path.splitext(amr)
-  fin = amr
-  fout = fn[0]+'.pcm'
+	basename = os.path.splitext(silkfile)
+	pcmfile = basename[0] + '.pcm'
 
-  cmdline = '"%s" "%s" "%s" %s' % (cmd, fin, fout, ' '.join(options))
+	cmdline = '"%s" "%s" "%s" %s' % (cmd, silkfile, pcmfile, ' '.join(options))
 
-  # print(cmdline)
-  ret = run(cmdline)
+	# print(cmdline)
+	ret = run(cmdline)
+	return dict(pcmfile=pcmfile, retcode=ret[0], stdout=ret[1], stderr=ret[2])
 
-  return(fout)
-  pass
 
-def pcm2wav(pcm):
-  if not os.path.isfile(pcm):
-    return(None)
-  with open(pcm, 'rb') as pcmfile:
-    pcmdata = pcmfile.read()
-    # wavfile.setparams((2, 2, 44100, 0, 'NONE', 'NONE'))
-    # wavfile.setparams((2, 1, 8000, 242, 'NONE', 'NONE'))
+def pcm2wav(pcmfile):
+	if not os.path.isfile(pcmfile):
+		return
 
-    #Wave_write.setnchannels(n)
-    #Set the number of channels.
-    #
-    #Wave_write.setsampwidth(n)
-    #Set the sample width to n bytes.
-    #
-    #Wave_write.setframerate(n)
-    #Set the frame rate to n.
-    #
-    #Wave_write.setnframes(n)
-    #Set the number of frames to n. This will be changed later if more frames are written.
-    #
-    #Wave_write.setcomptype(type, name)
-    #Set the compression type and description. At the moment, only compression type NONE is supported, meaning no compression.
-    #
-    #Wave_write.setparams(tuple)
-    #The tuple should be (nchannels, sampwidth, framerate, nframes, comptype, compname), with values valid for the set*() methods. Sets all parameters.
-    #
-    fn = os.path.splitext(pcm)
-    wav = fn[0]+'.wav'
-    wavfile = wave.open(wav, 'wb')
+	with open(pcmfile, 'rb') as fi:
+		pcmdata = fi.read()
+		# wavfile.setparams((2, 2, 44100, 0, 'NONE', 'NONE'))
+		# wavfile.setparams((2, 1, 8000, 242, 'NONE', 'NONE'))
 
-    wavfile.setnchannels(1)
-    wavfile.setsampwidth(2)
-    wavfile.setframerate(8000)
-    wavfile.setnframes(0)
+		# Wave_write.setnchannels(n)
+		# Set the number of channels.
+		#
+		# Wave_write.setsampwidth(n)
+		# Set the sample width to n bytes.
+		#
+		# Wave_write.setframerate(n)
+		# Set the frame rate to n.
+		#
+		# Wave_write.setnframes(n)
+		# Set the number of frames to n. This will be changed later if more frames are written.
+		#
+		# Wave_write.setcomptype(type, name)
+		# Set the compression type and description. At the moment, only compression type NONE is supported, meaning no compression.
+		#
+		# Wave_write.setparams(tuple)
+		# The tuple should be (nchannels, sampwidth, framerate, nframes, comptype, compname), with values valid for the set*() methods. Sets all parameters.
+		#
+		basename = os.path.splitext(pcmfile)
+		wavfile = basename[0] + '.wav'
+		fo = wave.open(wavfile, 'wb')
 
-    wavfile.writeframes(pcmdata)
+		fo.setnchannels(1)
+		fo.setsampwidth(2)
+		fo.setframerate(8000)
+		fo.setnframes(0)
 
-    wavfile.close()
+		fo.writeframes(pcmdata)
 
-    return(wav)
-  pass
+		fo.close()
+
+		return wavfile
+
+
+def silk2wav(silkfile, destdir=None):
+	ret = silk2pcm(silkfile)
+	if ret['retcode'] != 0:
+		print ret['stderr']
+		print ret['stdout']
+		return
+
+	pcmfile = ret['pcmfile']
+	if not pcmfile:
+		return
+
+	if not os.path.isfile(pcmfile):
+		print ret['stderr']
+		print ret['stdout']
+		return
+
+	wavfile = pcm2wav(pcmfile)
+	if not wavfile:
+		return
+
+	os.remove(pcmfile)
+	if destdir:
+		basefile = os.path.basename(wavfile)
+		sour, dest = wavfile, os.path.join(destdir, basefile)
+		shutil.move(sour, dest)
+		wavfile = dest
+	return wavfile
+
 
 def wavconvert(wav, codec):
-  from pydub import AudioSegment
-  song = AudioSegment.from_wav(wav)
+	from pydub import AudioSegment
+	song = AudioSegment.from_wav(wav)
 
-  fn = os.path.splitext(wav)
-  out = fn[0]+'.'+codec
+	fn = os.path.splitext(wav)
+	out = fn[0] + '.' + codec
 
-  tags = {
-          'artist'  : 'Various Artists',
-          'album'   : 'WeChat Voice',
-          'year'    : time.strftime('%Y-%m-%d'),
-          'comments': 'This album is awesome!'
-         }
+	tags = {
+		'artist': 'Various Artists',
+		'album': 'WeChat Voice',
+		'year': time.strftime('%Y-%m-%d'),
+		'comments': 'This album is awesome!'
+	}
 
-  parameters = ['-q:a', '0']
-  if codec.lower() == 'ogg':
-    parameters = ['-q:a', '0']
-  elif codec.lower() in ['mp3', 'mp2', 'mpa']:
-    parameters = ['-q:a', '6']
-  elif codec.lower() in ['aac', 'mp4', 'm4a']:
-    parameters = ['-q:a', '0']
-    codec = 'mp4'
+	parameters = ['-q:a', '0']
+	if codec.lower() == 'ogg':
+		parameters = ['-q:a', '0']
+	elif codec.lower() in ['mp3', 'mp2', 'mpa']:
+		parameters = ['-q:a', '6']
+	elif codec.lower() in ['aac', 'mp4', 'm4a']:
+		parameters = ['-q:a', '0']
+		codec = 'mp4'
 
-  song.export(out, format=codec, parameters=parameters, tags=tags)
-  return(out)
-  pass
+	song.export(out, format=codec, parameters=parameters, tags=tags)
+	return out
+	pass
 
-def clean(pcm, wav):
-  if os.path.isfile(pcm):
-    os.remove(pcm)
-  if os.path.isfile(wav):
-    os.remove(wav)
-  pass
+
+def clean(pcmfile, wavfile):
+	if os.path.isfile(pcmfile):
+		os.remove(pcmfile)
+	if os.path.isfile(wavfile):
+		os.remove(wavfile)
 
 
 if __name__ == '__main__':
-  fin = None
-  fout = None
-  codec = 'ogg'
-  argc = len(sys.argv)
-  if argc == 0:
-    print('usage: amr2ogg.py <*.amr|input.amr> [ogg|mp3|mp4|m4a]')
-    exit
+	fin = None
+	fout = None
+	codec = 'ogg'
+	argc = len(sys.argv)
+	if argc == 1:
+		print('usage: amr2ogg.py <*.amr|input.amr> [ogg|mp3|mp4|m4a]')
+		exit
 
-  if argc > 1:
-    fin = sys.argv[1]
-  if argc > 2:
-    # fn = os.path.splitext(sys.argv[2])
-    # codec = fn[1][1:]
-    codec = sys.argv[2]
+	if argc > 1:
+		fin = sys.argv[1]
+	if argc > 2:
+		# fn = os.path.splitext(sys.argv[2])
+		# codec = fn[1][1:]
+		codec = sys.argv[2]
 
-  if fin and codec in ['ogg', 'mp3', 'mp4', 'm4a', 'aac']:
-    path2sys()
+	if fin and codec in ['ogg', 'mp3', 'mp4', 'm4a', 'aac']:
+		path2sys()
 
-    files = glob.glob(fin)
-    for amr in files:
-      fn = os.path.splitext(amr)
-      ext = fn[1].lower()
-      if ext in ['.amr']:
-        pcm = amr2pcm(amr)
-        wav = pcm2wav(pcm)
-        fout = wavconvert(wav, codec)
-        clean(pcm, wav)
-      elif ext in ['aud']:
-        aud = aud2fix(amr)
-        fout = wavconvert(aud, codec)
-      print('%s has converted to %s.\n' % (amr, fout))
-
+		files = glob.glob(fin)
+		for amr in files:
+			fn = os.path.splitext(amr)
+			ext = fn[1].lower()
+			if ext in ['.amr']:
+				pcm = silk2pcm(amr)
+				wav = pcm2wav(pcm)
+				fout = wavconvert(wav, codec)
+				clean(pcm, wav)
+			elif ext in ['aud']:
+				aud = aud2fix(amr)
+				fout = wavconvert(aud, codec)
+			print('%s has converted to %s.\n' % (amr, fout))
